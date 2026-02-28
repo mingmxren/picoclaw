@@ -18,6 +18,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
+	"github.com/sipeed/picoclaw/pkg/commands"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/identity"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -47,6 +48,9 @@ type TelegramChannel struct {
 	chatIDs  map[string]int64
 	ctx      context.Context
 	cancel   context.CancelFunc
+
+	registerFunc     func(context.Context, []commands.Definition) error
+	commandRegCancel context.CancelFunc
 }
 
 func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChannel, error) {
@@ -141,6 +145,8 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		"username": c.bot.Username(),
 	})
 
+	c.startCommandRegistration(c.ctx, commands.NewRegistry(commands.BuiltinDefinitions(c.config)).ForChannel("telegram"))
+
 	go bh.Start()
 
 	return nil
@@ -158,6 +164,9 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 	// Cancel our context (stops long polling)
 	if c.cancel != nil {
 		c.cancel()
+	}
+	if c.commandRegCancel != nil {
+		c.commandRegCancel()
 	}
 
 	return nil
