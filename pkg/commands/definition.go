@@ -6,4 +6,5 @@ type Definition struct {
 	Usage       string
 	Aliases     []string
 	Channels    []string
+	Handler     Handler
 }
