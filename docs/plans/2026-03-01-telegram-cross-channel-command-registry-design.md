@@ -1,143 +1,142 @@
-# 跨 Channel 命令单一来源与平台注册设计
+# Cross-Channel Command Single Source and Platform Registration Design
 
-## 背景
+## Background
 
-当前 Telegram 命令在 `pkg/channels/telegram/telegram.go` 与 `pkg/channels/telegram/telegram_commands.go` 中分散定义，存在以下问题：
+Telegram commands are currently defined in both `pkg/channels/telegram/telegram.go` and `pkg/channels/telegram/telegram_commands.go`, which causes the following issues:
 
-- 新增命令需要在多个位置重复修改，容易漏改。
-- Telegram 平台侧菜单命令（Bot Commands）未自动注册。
-- 未来扩展到 WhatsApp 等 channel 时，无法复用命令定义与行为。
+- Adding a new command requires duplicated updates in multiple places, which is error-prone.
+- Telegram platform menu commands (Bot Commands) are not automatically registered.
+- When expanding to channels such as WhatsApp, command definitions and behavior cannot be reused.
 
-## 目标
+## Goals
 
-- 建立命令定义单一来源（Single Source of Truth）。
-- 新增命令时只改一处定义，即可同步到：
-  - 命令解析与执行；
-  - Telegram 平台命令菜单注册；
-  - `help` 命令展示。
-- 支持多 channel 分层能力：
-  - 所有 channel 共享统一命令解析/执行；
-  - 仅对支持平台注册 API 的 channel 启用平台注册（如 Telegram）。
-- 启动时命令注册失败不阻塞 channel 启动，采用告警 + 后台重试。
+- Establish a single source of truth for command definitions.
+- When adding a new command, update one definition and automatically synchronize it to:
+  - command parsing and execution;
+  - Telegram platform command menu registration;
+  - `help` command output.
+- Support layered multi-channel capabilities:
+  - all channels share one command parsing/execution flow;
+  - platform registration is enabled only for channels that support registration APIs (for example, Telegram).
+- Command registration failures at startup must not block channel startup; use warnings plus background retries.
 
-## 非目标
+## Non-Goals
 
-- 本轮不强制所有 channel 都提供平台侧命令菜单。
-- 不改动 Agent 主业务消息处理逻辑，只处理命令入口与注册层。
-- 不引入复杂命令权限体系（保持 YAGNI，复用现有 allow-list 机制）。
+- This iteration does not require all channels to provide platform-side command menus.
+- Do not change the Agent's main business-message handling logic; only command entry and registration layers are in scope.
+- Do not introduce a complex command permission system (YAGNI; reuse the existing allow-list mechanism).
 
-## 决策记录
+## Decision Log
 
-- 采用方案 A：能力接口分层 + 统一命令目录。
-- WhatsApp 等不具备平台注册能力的 channel，仅实现统一解析执行。
-- 注册失败策略固定为非阻塞（warn + retry），不引入严格模式开关。
+- Choose Approach A: capability-interface layering + a unified command catalog.
+- Channels without platform registration support (for example, WhatsApp) only implement unified parse/execute behavior.
+- Registration failure policy is fixed as non-blocking (warn + retry), without adding a strict-mode switch.
 
-## 架构设计
+## Architecture Design
 
-### 1) 统一命令目录
+### 1) Unified Command Catalog
 
-新增 `pkg/commands`（命令域）作为唯一命令定义源，定义结构包含：
+Add `pkg/commands` (command domain) as the only source of command definitions. The definition structure includes:
 
-- `Name`：命令名（如 `help`）。
-- `Description`：平台菜单描述。
-- `Usage`：用户提示（如 `/show [model|channel]`）。
-- `Aliases`：可选别名。
-- `Channels`：可选 channel 白名单（为空表示全 channel）。
-- `Handler`：统一执行入口。
+- `Name`: command name (for example, `help`).
+- `Description`: description for platform menus.
+- `Usage`: user-facing hint (for example, `/show [model|channel]`).
+- `Aliases`: optional aliases.
+- `Channels`: optional channel allow-list (empty means all channels).
+- `Handler`: unified execution entry.
 
-### 2) 统一分发器
+### 2) Unified Dispatcher
 
-新增 `CommandDispatcher`：
+Add `CommandDispatcher`:
 
-- 输入：`CommandRequest`（channel/chat/sender/text/message_id 等）。
-- 输出：`DispatchResult`（matched/executed/error）。
-- 语义：
-  - 命中命令：执行 handler 并返回已处理；
-  - 未命中：交还 channel 走普通消息流程（进入 agent）。
+- Input: `CommandRequest` (channel/chat/sender/text/message_id, etc.).
+- Output: `DispatchResult` (matched/executed/error).
+- Semantics:
+  - command matched: execute handler and return handled;
+  - command not matched: return control to channel normal message flow (into agent).
 
-### 3) Channel 能力接口分层
+### 3) Layered Channel Capability Interfaces
 
-在 `pkg/channels` 增加可选接口（不修改现有 `Channel` 主接口）：
+Add optional interfaces in `pkg/channels` (without changing the existing `Channel` main interface):
 
-- `CommandParserCapable`（可选）：声明 channel 具备命令入口解析。
-- `CommandRegistrarCapable`（可选）：声明 channel 支持平台菜单注册。
+- `CommandParserCapable` (optional): indicates the channel can parse command entry points.
+- `CommandRegistrarCapable` (optional): indicates the channel supports platform menu registration.
 
-Telegram 实现 `CommandRegistrarCapable`；WhatsApp 可不实现该接口。
+Telegram implements `CommandRegistrarCapable`; WhatsApp may omit this interface.
 
-### 4) Telegram 适配层
+### 4) Telegram Adapter Layer
 
-Telegram channel 在 `Start()` 中执行两条并行职责：
+The Telegram channel performs two parallel responsibilities in `Start()`:
 
-- 消息处理链启动（立即可用）；
-- 异步命令注册流程（不阻塞可用性）。
+- start the message-processing pipeline (immediately available);
+- run asynchronous command registration (does not block availability).
 
-命令注册数据来自统一命令目录，通过映射转换为 Telegram `BotCommand`。
+Registration data comes from the unified command catalog and is mapped to Telegram `BotCommand`.
 
-## 启动时序与数据流
+## Startup Sequence and Data Flow
 
-### 启动时序
+### Startup Sequence
 
-1. 创建 channel 时注入命令定义与 dispatcher。
-2. `Start()` 建立连接并启动消息监听。
-3. 若 channel 支持注册能力，异步执行 `RegisterCommands()`。
-4. 注册失败：记录 warning，按退避策略重试；channel 保持 running。
+1. Inject command definitions and dispatcher when creating channels.
+2. `Start()` establishes the connection and starts message listening.
+3. If the channel supports registration capability, asynchronously run `RegisterCommands()`.
+4. On registration failure: log a warning and retry with backoff while keeping the channel running.
 
-### 入站消息流
+### Inbound Message Flow
 
-1. channel 收到文本消息。
-2. 转换为 `CommandRequest` 并调用 dispatcher。
-3. 命中命令：执行并回复。
-4. 未命中：按原流程进入 agent。
+1. The channel receives a text message.
+2. Convert it into `CommandRequest` and call the dispatcher.
+3. If matched: execute and reply.
+4. If unmatched: continue the original flow into the agent.
 
-### 平台注册流
+### Platform Registration Flow
 
-1. 统一命令定义按 channel 过滤可见命令。
-2. 转换为平台命令结构并提交平台 API。
-3. 成功后标记已注册；失败进入重试。
+1. Filter visible commands from the unified command definitions by channel.
+2. Convert to platform command structures and submit through platform APIs.
+3. Mark registered on success; enter retry flow on failure.
 
-## 错误处理与可观测性
+## Error Handling and Observability
 
-### 错误分级
+### Error Levels
 
-- 用户输入错误：返回 usage（非系统错误）。
-- 命令执行错误：返回用户可读错误 + error 日志。
-- 平台注册错误：warning 日志 + 自动重试，不中断启动。
+- User input error: return usage text (not a system error).
+- Command execution error: return a user-readable error plus error logs.
+- Platform registration error: warning logs + automatic retries, without interrupting startup.
 
-### 日志建议
+### Logging Recommendations
 
 - `command registration started/succeeded/failed`
 - `command dispatch matched/unmatched`
 - `command execution succeeded/failed`
 
-建议字段：`channel`, `command`, `attempt`, `next_retry_seconds`, `error`.
+Recommended fields: `channel`, `command`, `attempt`, `next_retry_seconds`, `error`.
 
-### 重试策略
+### Retry Strategy
 
-- 指数退避：`5s -> 15s -> 60s -> 5m -> 10m(cap)`。
-- 成功即停止。
-- `Stop()` 必须 cancel 重试 goroutine，防止泄漏。
+- Exponential backoff: `5s -> 15s -> 60s -> 5m -> 10m(cap)`.
+- Stop retrying immediately after success.
+- `Stop()` must cancel retry goroutines to prevent leaks.
 
-## 测试与验收
+## Testing and Acceptance
 
-### 测试范围
+### Test Scope
 
-- 单元：registry 唯一性、channel 过滤、dispatcher 匹配与参数解析。
-- 集成：Telegram 注册失败不阻塞启动；重试成功后停止重试。
-- 回归：现有 `/help /start /show /list` 行为不退化；非命令消息仍进入 agent。
+- Unit: registry uniqueness, channel filtering, dispatcher matching, and argument parsing.
+- Integration: Telegram registration failure does not block startup; retries stop after a successful retry.
+- Regression: existing `/help /start /show /list` behavior does not regress; non-command messages still flow to the agent.
 
-### 验收标准
+### Acceptance Criteria
 
-- 新增命令只改统一定义一处。
-- Telegram 自动同步平台菜单命令。
-- WhatsApp 等 channel 在无平台注册能力时仍可统一解析执行命令。
-- 命令注册失败不阻塞启动，且可观测到重试日志。
+- Adding a new command requires changing only one unified definition.
+- Telegram platform menu commands are synchronized automatically.
+- Channels such as WhatsApp still use unified command parse/execute behavior without platform registration support.
+- Registration failures do not block startup, and retry logs are observable.
 
-## 风险与缓解
+## Risks and Mitigations
 
-- 风险：定义与执行耦合过紧导致测试困难。
-  - 缓解：将命令元数据与执行器解耦，执行器可依赖接口注入。
-- 风险：channel 适配差异导致行为漂移。
-  - 缓解：统一 dispatcher 测试矩阵覆盖不同 channel 输入。
-- 风险：重试逻辑 goroutine 泄漏。
-  - 缓解：统一 context 生命周期和 `Stop()` 回收测试。
-
+- Risk: command definitions and execution become too tightly coupled, making tests harder.
+  - Mitigation: decouple command metadata from executors; inject executor dependencies via interfaces.
+- Risk: channel adapter differences cause behavior drift.
+  - Mitigation: cover channel-specific inputs with a unified dispatcher test matrix.
+- Risk: retry logic leaks goroutines.
+  - Mitigation: use a unified context lifecycle and `Stop()` cleanup tests.
