@@ -78,7 +78,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	}
 
 	// Only include session if not empty
-	if c.Session.DMScope != "" || len(c.Session.IdentityLinks) > 0 {
+	if c.Session.DMScope != "" || len(c.Session.IdentityLinks) > 0 || c.Session.BacklogLimit > 0 {
 		aux.Session = &c.Session
 	}
 
@@ -165,6 +165,16 @@ type AgentBinding struct {
 type SessionConfig struct {
 	DMScope       string              `json:"dm_scope,omitempty"`
 	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
+	BacklogLimit  int                 `json:"backlog_limit,omitempty"`
+}
+
+const DefaultSessionBacklogLimit = 20
+
+func (s SessionConfig) EffectiveBacklogLimit() int {
+	if s.BacklogLimit < 1 {
+		return DefaultSessionBacklogLimit
+	}
+	return s.BacklogLimit
 }
 
 type AgentDefaults struct {
@@ -607,6 +617,10 @@ func LoadConfig(path string) (*Config, error) {
 
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
+	}
+
+	if cfg.Session.BacklogLimit < 1 {
+		cfg.Session.BacklogLimit = DefaultSessionBacklogLimit
 	}
 
 	// Migrate legacy channel config fields to new unified structures
