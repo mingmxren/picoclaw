@@ -52,7 +52,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req Request) Result {
 			continue
 		}
 		if def.Handler == nil {
-			return Result{Matched: true, Handled: false, Command: def.Name}
+			// Definition-only command (for menu registration / discovery).
+			// Let the inbound message continue to the agent loop.
+			return Result{Matched: false, Handled: false, Command: def.Name}
 		}
 		err := def.Handler(ctx, req)
 		return Result{Matched: true, Handled: true, Command: def.Name, Err: err}

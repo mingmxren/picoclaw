@@ -59,3 +59,17 @@ func TestDispatcher_MatchTelegramMentionSyntax(t *testing.T) {
 		t.Fatalf("dispatch result = %+v, called=%v", res, called)
 	}
 }
+
+func TestDispatcher_PassThroughDefinitionWithoutHandler(t *testing.T) {
+	d := NewDispatcher(NewRegistry([]Definition{
+		{Name: "session"}, // menu-only / pass-through definition
+	}))
+
+	res := d.Dispatch(context.Background(), Request{
+		Channel: "telegram",
+		Text:    "/session list",
+	})
+	if res.Matched {
+		t.Fatalf("expected pass-through unmatched result, got %+v", res)
+	}
+}
