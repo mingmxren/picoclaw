@@ -103,10 +103,37 @@ func (sm *SessionManager) StartNew(scopeKey string) (string, error) {
 	}
 
 	newSessionKey := scopeKey + "#" + strconv.Itoa(newOrdinal)
+
+	created := false
+	if _, ok := sm.sessions[newSessionKey]; !ok {
+		sm.sessions[newSessionKey] = &Session{
+			Key:      newSessionKey,
+			Messages: []providers.Message{},
+			Created:  now,
+			Updated:  now,
+		}
+		created = true
+	}
+	if err := sm.saveSessionLocked(newSessionKey); err != nil {
+		if created {
+			delete(sm.sessions, newSessionKey)
+		}
+		return "", err
+	}
+
+	prevActive := scope.ActiveSessionKey
+	prevOrdered := append([]string(nil), scope.OrderedSessions...)
+	prevUpdated := scope.UpdatedAt
 	scope.ActiveSessionKey = newSessionKey
-	scope.OrderedSessions = append([]string{newSessionKey}, scope.OrderedSessions...)
+	scope.OrderedSessions = prependSessionUnique(scope.OrderedSessions, newSessionKey)
 	scope.UpdatedAt = now
 	if err := sm.saveIndexLocked(); err != nil {
+		scope.ActiveSessionKey = prevActive
+		scope.OrderedSessions = prevOrdered
+		scope.UpdatedAt = prevUpdated
+		if created {
+			delete(sm.sessions, newSessionKey)
+		}
 		return "", err
 	}
 	return newSessionKey, nil
@@ -379,16 +406,6 @@ func (sm *SessionManager) Save(key string) error {
 		return nil
 	}
 
-	filename := sanitizeFilename(key)
-
-	// filepath.IsLocal rejects empty names, "..", absolute paths, and
-	// OS-reserved device names (NUL, COM1 … on Windows).
-	// The extra checks reject "." and any directory separators so that
-	// the session file is always written directly inside sm.storage.
-	if filename == "." || !filepath.IsLocal(filename) || strings.ContainsAny(filename, `/\`) {
-		return os.ErrInvalid
-	}
-
 	// Snapshot under read lock, then perform slow file I/O after unlock.
 	sm.mu.RLock()
 	stored, ok := sm.sessions[key]
@@ -397,60 +414,10 @@ func (sm *SessionManager) Save(key string) error {
 		return nil
 	}
 
-	snapshot := Session{
-		Key:     stored.Key,
-		Summary: stored.Summary,
-		Created: stored.Created,
-		Updated: stored.Updated,
-	}
-	if len(stored.Messages) > 0 {
-		snapshot.Messages = make([]providers.Message, len(stored.Messages))
-		copy(snapshot.Messages, stored.Messages)
-	} else {
-		snapshot.Messages = []providers.Message{}
-	}
+	snapshot := cloneSession(stored)
 	sm.mu.RUnlock()
 
-	data, err := json.MarshalIndent(snapshot, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	sessionPath := filepath.Join(sm.storage, filename+".json")
-	tmpFile, err := os.CreateTemp(sm.storage, "session-*.tmp")
-	if err != nil {
-		return err
-	}
-
-	tmpPath := tmpFile.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Chmod(0o644); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Sync(); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-
-	if err := os.Rename(tmpPath, sessionPath); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
+	return sm.writeSessionSnapshot(snapshot)
 }
 
 func (sm *SessionManager) loadSessions() error {
@@ -515,20 +482,53 @@ func (sm *SessionManager) loadIndex() error {
 		loaded.Scopes = make(map[string]*scopeIndex)
 	}
 
+	changed := false
 	for scopeKey, scope := range loaded.Scopes {
 		if scope == nil {
 			delete(loaded.Scopes, scopeKey)
+			changed = true
 			continue
 		}
-		if len(scope.OrderedSessions) == 0 {
-			scope.OrderedSessions = []string{scopeKey}
+
+		filtered := make([]string, 0, len(scope.OrderedSessions))
+		seen := make(map[string]struct{}, len(scope.OrderedSessions))
+		for _, sessionKey := range scope.OrderedSessions {
+			if sessionKey == "" {
+				changed = true
+				continue
+			}
+			if _, exists := sm.sessions[sessionKey]; !exists {
+				changed = true
+				continue
+			}
+			if _, dup := seen[sessionKey]; dup {
+				changed = true
+				continue
+			}
+			seen[sessionKey] = struct{}{}
+			filtered = append(filtered, sessionKey)
 		}
-		if scope.ActiveSessionKey == "" {
+
+		if len(filtered) == 0 {
+			delete(loaded.Scopes, scopeKey)
+			changed = true
+			continue
+		}
+
+		if len(filtered) != len(scope.OrderedSessions) {
+			changed = true
+		}
+		scope.OrderedSessions = filtered
+		if _, ok := seen[scope.ActiveSessionKey]; !ok {
 			scope.ActiveSessionKey = scope.OrderedSessions[0]
+			changed = true
 		}
 	}
 
 	sm.index = loaded
+	if changed {
+		return sm.saveIndexLocked()
+	}
 	return nil
 }
 
@@ -610,6 +610,104 @@ func (sm *SessionManager) ensureScopeLocked(scopeKey string, now time.Time) (*sc
 		scope.UpdatedAt = now
 	}
 	return scope, changed
+}
+
+func prependSessionUnique(ordered []string, sessionKey string) []string {
+	next := make([]string, 0, len(ordered)+1)
+	next = append(next, sessionKey)
+	for _, existing := range ordered {
+		if existing == sessionKey {
+			continue
+		}
+		next = append(next, existing)
+	}
+	return next
+}
+
+func cloneSession(stored *Session) Session {
+	snapshot := Session{
+		Key:     stored.Key,
+		Summary: stored.Summary,
+		Created: stored.Created,
+		Updated: stored.Updated,
+	}
+	if len(stored.Messages) > 0 {
+		snapshot.Messages = make([]providers.Message, len(stored.Messages))
+		copy(snapshot.Messages, stored.Messages)
+	} else {
+		snapshot.Messages = []providers.Message{}
+	}
+	return snapshot
+}
+
+func (sm *SessionManager) saveSessionLocked(key string) error {
+	if sm.storage == "" {
+		return nil
+	}
+
+	stored, ok := sm.sessions[key]
+	if !ok {
+		return fmt.Errorf("session %q not found", key)
+	}
+
+	return sm.writeSessionSnapshot(cloneSession(stored))
+}
+
+func (sm *SessionManager) writeSessionSnapshot(snapshot Session) error {
+	if sm.storage == "" {
+		return nil
+	}
+
+	filename := sanitizeFilename(snapshot.Key)
+
+	// filepath.IsLocal rejects empty names, "..", absolute paths, and
+	// OS-reserved device names (NUL, COM1 … on Windows).
+	// The extra checks reject "." and any directory separators so that
+	// the session file is always written directly inside sm.storage.
+	if filename == "." || !filepath.IsLocal(filename) || strings.ContainsAny(filename, `/\`) {
+		return os.ErrInvalid
+	}
+
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	sessionPath := filepath.Join(sm.storage, filename+".json")
+	tmpFile, err := os.CreateTemp(sm.storage, "session-*.tmp")
+	if err != nil {
+		return err
+	}
+
+	tmpPath := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Chmod(0o644); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpPath, sessionPath); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
 }
 
 func (sm *SessionManager) deleteSessionFile(sessionKey string) error {

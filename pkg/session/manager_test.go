@@ -133,6 +133,48 @@ func TestStartNew_CreatesMonotonicSessionKeys(t *testing.T) {
 	}
 }
 
+func TestStartNew_PersistsSessionFileWithoutManualSave(t *testing.T) {
+	dir := t.TempDir()
+	sm := NewSessionManager(dir)
+	scope := "agent:main:telegram:direct:user1"
+
+	if _, err := sm.ResolveActive(scope); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := sm.StartNew(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionPath := filepath.Join(dir, sanitizeFilename(s2)+".json")
+	if _, err := os.Stat(sessionPath); err != nil {
+		t.Fatalf("expected %s to exist: %v", sessionPath, err)
+	}
+
+	indexPath := filepath.Join(dir, sessionIndexFilename)
+	raw, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+
+	var idx sessionIndex
+	if err := json.Unmarshal(raw, &idx); err != nil {
+		t.Fatalf("unmarshal index: %v", err)
+	}
+
+	scoped := idx.Scopes[scope]
+	if scoped == nil {
+		t.Fatalf("expected scope %q in index", scope)
+	}
+	if scoped.ActiveSessionKey != s2 {
+		t.Fatalf("active=%q, want %q", scoped.ActiveSessionKey, s2)
+	}
+	if len(scoped.OrderedSessions) == 0 || scoped.OrderedSessions[0] != s2 {
+		t.Fatalf("ordered_sessions=%v, want first=%q", scoped.OrderedSessions, s2)
+	}
+}
+
 func TestListAndResume_ByScopeOrdinal(t *testing.T) {
 	sm := NewSessionManager(t.TempDir())
 	scope := "agent:main:telegram:direct:user1"
@@ -227,5 +269,90 @@ func TestPrune_RemovesOldestFromMemoryAndDisk(t *testing.T) {
 	}
 	if list[0].SessionKey != scope+"#3" || list[1].SessionKey != scope+"#2" {
 		t.Fatalf("list order after prune = %+v", list)
+	}
+}
+
+func TestLoadIndex_SelfHealsStaleReferences(t *testing.T) {
+	dir := t.TempDir()
+	scopeA := "agent:main:telegram:direct:user1"
+	scopeB := "agent:main:telegram:direct:user2"
+	validNewest := scopeA + "#3"
+	validOlder := scopeA + "#2"
+
+	seed := NewSessionManager(dir)
+	seed.AddMessage(validNewest, "user", "hello")
+	seed.AddMessage(validOlder, "user", "hello")
+	if err := seed.Save(validNewest); err != nil {
+		t.Fatalf("save %q: %v", validNewest, err)
+	}
+	if err := seed.Save(validOlder); err != nil {
+		t.Fatalf("save %q: %v", validOlder, err)
+	}
+
+	stale := sessionIndex{
+		Version: 1,
+		Scopes: map[string]*scopeIndex{
+			scopeA: {
+				ActiveSessionKey: scopeA + "#999",
+				OrderedSessions: []string{
+					validNewest,
+					validNewest,
+					scopeA + "#404",
+					validOlder,
+				},
+			},
+			scopeB: {
+				ActiveSessionKey: scopeB,
+				OrderedSessions:  []string{scopeB},
+			},
+		},
+	}
+
+	raw, err := json.MarshalIndent(stale, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal stale index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, sessionIndexFilename), raw, 0o644); err != nil {
+		t.Fatalf("write stale index: %v", err)
+	}
+
+	reloaded := NewSessionManager(dir)
+
+	indexRaw, err := os.ReadFile(filepath.Join(dir, sessionIndexFilename))
+	if err != nil {
+		t.Fatalf("read healed index: %v", err)
+	}
+
+	var healed sessionIndex
+	if err := json.Unmarshal(indexRaw, &healed); err != nil {
+		t.Fatalf("unmarshal healed index: %v", err)
+	}
+
+	scopeAHealed := healed.Scopes[scopeA]
+	if scopeAHealed == nil {
+		t.Fatalf("expected scope %q in healed index", scopeA)
+	}
+	if scopeAHealed.ActiveSessionKey != validNewest {
+		t.Fatalf("active=%q, want %q", scopeAHealed.ActiveSessionKey, validNewest)
+	}
+	if len(scopeAHealed.OrderedSessions) != 2 {
+		t.Fatalf("ordered_sessions=%v, want len=2", scopeAHealed.OrderedSessions)
+	}
+	if scopeAHealed.OrderedSessions[0] != validNewest || scopeAHealed.OrderedSessions[1] != validOlder {
+		t.Fatalf("ordered_sessions=%v, want [%s %s]", scopeAHealed.OrderedSessions, validNewest, validOlder)
+	}
+	if _, exists := healed.Scopes[scopeB]; exists {
+		t.Fatalf("expected stale scope %q removed", scopeB)
+	}
+
+	list, err := reloaded.List(scopeA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len(list)=%d, want 2", len(list))
+	}
+	if !list[0].Active || list[0].SessionKey != validNewest {
+		t.Fatalf("list[0]=%+v, want active newest", list[0])
 	}
 }
