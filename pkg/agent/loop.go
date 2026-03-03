@@ -101,9 +101,8 @@ func NewAgentLoop(
 		state:       stateManager,
 		summarizing: sync.Map{},
 		fallback:    fallbackChain,
+		cmdRegistry: commands.NewRegistry(commands.BuiltinDefinitions()),
 	}
-
-	al.cmdRegistry = commands.NewRegistry(commands.BuiltinDefinitions())
 
 	return al
 }
@@ -1471,7 +1470,7 @@ func (al *AgentLoop) handleCommand(
 		return "", false
 	}
 
-	rt := al.buildRuntime()
+	rt := al.buildCommandsRuntime()
 	executor := commands.NewExecutor(al.cmdRegistry, rt)
 
 	var commandReply string
@@ -1495,12 +1494,12 @@ func (al *AgentLoop) handleCommand(
 			return commandReply, true
 		}
 		return "", true
-	default:
+	default: // OutcomePassthrough — let the message fall through to LLM
 		return "", false
 	}
 }
 
-func (al *AgentLoop) buildRuntime() *commands.Runtime {
+func (al *AgentLoop) buildCommandsRuntime() *commands.Runtime {
 	return &commands.Runtime{
 		Config: al.cfg,
 		GetModelInfo: func() (string, string) {
