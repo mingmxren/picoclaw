@@ -58,7 +58,23 @@ type processOptions struct {
 	NoHistory       bool   // If true, don't load session history (for heartbeat)
 }
 
-const defaultResponse = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
+const (
+	defaultResponse           = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
+	commandPrefixSlash        = "/"
+	commandMentionSeparator   = "@"
+	commandNameNew            = "/new"
+	commandNameReset          = "/reset"
+	commandNameSession        = "/session"
+	commandNameShow           = "/show"
+	commandNameList           = "/list"
+	commandNameSwitch         = "/switch"
+	sessionKeyAgentPrefix     = "agent:"
+	metadataKeyAccountID      = "account_id"
+	metadataKeyGuildID        = "guild_id"
+	metadataKeyTeamID         = "team_id"
+	metadataKeyParentPeerKind = "parent_peer_kind"
+	metadataKeyParentPeerID   = "parent_peer_id"
+)
 
 func NewAgentLoop(
 	cfg *config.Config,
@@ -476,11 +492,11 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 	logger.InfoCF("agent", "Routed message",
 		map[string]any{
-			"agent_id":     agent.ID,
-			"scope_key":    scopeKey,
-			"session_key":  sessionKey,
-			"matched_by":   route.MatchedBy,
-			"route_agent":  route.AgentID,
+			"agent_id":      agent.ID,
+			"scope_key":     scopeKey,
+			"session_key":   sessionKey,
+			"matched_by":    route.MatchedBy,
+			"route_agent":   route.AgentID,
 			"route_channel": route.Channel,
 		})
 
@@ -498,11 +514,11 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
 	route := al.registry.ResolveRoute(routing.RouteInput{
 		Channel:    msg.Channel,
-		AccountID:  msg.Metadata["account_id"],
+		AccountID:  inboundMetadata(msg, metadataKeyAccountID),
 		Peer:       extractPeer(msg),
 		ParentPeer: extractParentPeer(msg),
-		GuildID:    msg.Metadata["guild_id"],
-		TeamID:     msg.Metadata["team_id"],
+		GuildID:    inboundMetadata(msg, metadataKeyGuildID),
+		TeamID:     inboundMetadata(msg, metadataKeyTeamID),
 	})
 
 	agent, ok := al.registry.GetAgent(route.AgentID)
@@ -517,7 +533,7 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 }
 
 func resolveScopeKey(route routing.ResolvedRoute, msgSessionKey string) string {
-	if msgSessionKey != "" && strings.HasPrefix(msgSessionKey, "agent:") {
+	if msgSessionKey != "" && strings.HasPrefix(msgSessionKey, sessionKeyAgentPrefix) {
 		return msgSessionKey
 	}
 	return route.SessionKey
@@ -1391,7 +1407,7 @@ func (al *AgentLoop) handleCommand(
 	// Scope-aware command routing: session-affecting commands are resolved
 	// against route-derived scope keys so each chat/group keeps isolated history.
 	content := strings.TrimSpace(msg.Content)
-	if !strings.HasPrefix(content, "/") {
+	if !strings.HasPrefix(content, commandPrefixSlash) {
 		return "", false
 	}
 
@@ -1401,13 +1417,13 @@ func (al *AgentLoop) handleCommand(
 	}
 
 	cmd := parts[0]
-	if at := strings.Index(cmd, "@"); at > 0 {
+	if at := strings.Index(cmd, commandMentionSeparator); at > 0 {
 		cmd = cmd[:at]
 	}
 	args := parts[1:]
 
 	switch cmd {
-	case "/new", "/reset":
+	case commandNameNew, commandNameReset:
 		// Create and rotate session state only inside this scope.
 		scopeKey := resolveScopeKey(route, msg.SessionKey)
 		newSessionKey, err := agent.Sessions.StartNew(scopeKey)
@@ -1434,7 +1450,7 @@ func (al *AgentLoop) handleCommand(
 		}
 		return fmt.Sprintf("Started new session: %s (pruned %d old session(s))", newSessionKey, len(pruned)), true
 
-	case "/session":
+	case commandNameSession:
 		if len(args) < 1 {
 			return "Usage: /session [list|resume <index>]", true
 		}
@@ -1491,7 +1507,7 @@ func (al *AgentLoop) handleCommand(
 			return "Usage: /session [list|resume <index>]", true
 		}
 
-	case "/show":
+	case commandNameShow:
 		if len(args) < 1 {
 			return "Usage: /show [model|channel|agents]", true
 		}
@@ -1511,7 +1527,7 @@ func (al *AgentLoop) handleCommand(
 			return fmt.Sprintf("Unknown show target: %s", args[0]), true
 		}
 
-	case "/list":
+	case commandNameList:
 		if len(args) < 1 {
 			return "Usage: /list [models|channels|agents]", true
 		}
@@ -1534,7 +1550,7 @@ func (al *AgentLoop) handleCommand(
 			return fmt.Sprintf("Unknown list target: %s", args[0]), true
 		}
 
-	case "/switch":
+	case commandNameSwitch:
 		if len(args) < 3 || args[1] != "to" {
 			return "Usage: /switch [model|channel] to <name>", true
 		}
@@ -1582,10 +1598,17 @@ func extractPeer(msg bus.InboundMessage) *routing.RoutePeer {
 	return &routing.RoutePeer{Kind: msg.Peer.Kind, ID: peerID}
 }
 
+func inboundMetadata(msg bus.InboundMessage, key string) string {
+	if msg.Metadata == nil {
+		return ""
+	}
+	return msg.Metadata[key]
+}
+
 // extractParentPeer extracts the parent peer (reply-to) from inbound message metadata.
 func extractParentPeer(msg bus.InboundMessage) *routing.RoutePeer {
-	parentKind := msg.Metadata["parent_peer_kind"]
-	parentID := msg.Metadata["parent_peer_id"]
+	parentKind := inboundMetadata(msg, metadataKeyParentPeerKind)
+	parentID := inboundMetadata(msg, metadataKeyParentPeerID)
 	if parentKind == "" || parentID == "" {
 		return nil
 	}
