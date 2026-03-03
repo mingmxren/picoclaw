@@ -57,15 +57,14 @@ func trimCommandPrefix(token string) (string, bool) {
 	return "", false
 }
 
-func normalizeCommandName(name string) string {
-	return strings.ToLower(strings.TrimSpace(name))
+func secondToken(input string) string {
+	parts := strings.Fields(strings.TrimSpace(input))
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
 }
 
-func contains(items []string, target string) bool {
-	for _, item := range items {
-		if item == target {
-			return true
-		}
-	}
-	return false
+func normalizeCommandName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
