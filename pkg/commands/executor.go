@@ -8,7 +8,9 @@ import (
 type Outcome int
 
 const (
+	// OutcomePassthrough means this input should continue through normal agent flow.
 	OutcomePassthrough Outcome = iota
+	// OutcomeHandled means a command handler executed (with or without handler error).
 	OutcomeHandled
 )
 
