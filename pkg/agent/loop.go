@@ -47,6 +47,7 @@ type AgentLoop struct {
 	channelManager *channels.Manager
 	mediaStore     media.MediaStore
 	transcriber    voice.Transcriber
+	cmdExecutor    *commands.Executor
 }
 
 // processOptions configures how a message is processed
@@ -95,7 +96,7 @@ func NewAgentLoop(
 		stateManager = state.NewManager(defaultAgent.Workspace)
 	}
 
-	return &AgentLoop{
+	al := &AgentLoop{
 		bus:         msgBus,
 		cfg:         cfg,
 		registry:    registry,
@@ -103,6 +104,29 @@ func NewAgentLoop(
 		summarizing: sync.Map{},
 		fallback:    fallbackChain,
 	}
+
+	deps := &commands.Deps{
+		Config: cfg,
+		GetModelInfo: func() (string, string) {
+			agent := al.registry.GetDefaultAgent()
+			if agent == nil {
+				return cfg.Agents.Defaults.GetModelName(), cfg.Agents.Defaults.Provider
+			}
+			return agent.Model, cfg.Agents.Defaults.Provider
+		},
+		ListAgentIDs: al.registry.ListAgentIDs,
+		GetEnabledChannels: func() []string {
+			if al.channelManager == nil {
+				return nil
+			}
+			return al.channelManager.GetEnabledChannels()
+		},
+	}
+	al.cmdExecutor = commands.NewExecutor(
+		commands.NewRegistry(commands.BuiltinDefinitions(deps)),
+	)
+
+	return al
 }
 
 // registerSharedTools registers tools that are shared across all agents (web, message, spawn).
@@ -1467,7 +1491,10 @@ func (al *AgentLoop) handleCommand(
 		return "", false
 	}
 
-	executor := commands.NewExecutor(commands.NewRegistry(commands.BuiltinDefinitions(&commands.Deps{Config: al.cfg})))
+	executor := al.cmdExecutor
+	if executor == nil {
+		return "", false
+	}
 
 	var commandReply string
 	result := executor.Execute(ctx, commands.Request{
