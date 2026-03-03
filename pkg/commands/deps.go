@@ -11,4 +11,6 @@ type Deps struct {
 	GetModelInfo       func() (name, provider string)
 	ListAgentIDs       func() []string
 	GetEnabledChannels func() []string
+	SwitchModel        func(value string) (oldModel string, err error)
+	SwitchChannel      func(value string) error
 }

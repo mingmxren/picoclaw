@@ -66,8 +66,6 @@ type processOptions struct {
 const (
 	defaultResponse           = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
 	sessionKeyAgentPrefix     = "agent:"
-	switchCommandToken        = "/switch"
-	commandMentionSeparator   = "@"
 	metadataKeyAccountID      = "account_id"
 	metadataKeyGuildID        = "guild_id"
 	metadataKeyTeamID         = "team_id"
@@ -120,6 +118,28 @@ func NewAgentLoop(
 				return nil
 			}
 			return al.channelManager.GetEnabledChannels()
+		},
+		SwitchModel: func(value string) (string, error) {
+			defaultAgent := al.registry.GetDefaultAgent()
+			if defaultAgent == nil {
+				return "", fmt.Errorf("no default agent configured")
+			}
+			oldModel := defaultAgent.Model
+			defaultAgent.Model = value
+			if al.cfg != nil {
+				al.cfg.Agents.Defaults.ModelName = value
+				al.cfg.Agents.Defaults.Model = value
+			}
+			return oldModel, nil
+		},
+		SwitchChannel: func(value string) error {
+			if al.channelManager == nil {
+				return fmt.Errorf("channel manager not initialized")
+			}
+			if _, exists := al.channelManager.GetChannel(value); !exists && value != "cli" {
+				return fmt.Errorf("channel '%s' not found or not enabled", value)
+			}
+			return nil
 		},
 	}
 	al.cmdExecutor = commands.NewExecutor(
@@ -1484,10 +1504,7 @@ func (al *AgentLoop) handleCommand(
 	ctx context.Context,
 	msg bus.InboundMessage,
 ) (string, bool) {
-	// Generic command routing is delegated to the centralized commands executor.
-	// Session lifecycle commands are intentionally out of scope for this PR layer.
-	content := strings.TrimSpace(msg.Content)
-	if !strings.HasPrefix(content, "/") {
+	if !commands.HasCommandPrefix(msg.Content) {
 		return "", false
 	}
 
@@ -1520,53 +1537,9 @@ func (al *AgentLoop) handleCommand(
 			return result.Reply, true
 		}
 		return "", true
-	case commands.OutcomePassthrough:
-		parts := strings.Fields(content)
-		if len(parts) == 0 {
-			return "", false
-		}
-		cmd := parts[0]
-		if at := strings.Index(cmd, commandMentionSeparator); at > 0 {
-			cmd = cmd[:at]
-		}
-		if cmd != switchCommandToken {
-			return "", false
-		}
-
-		args := parts[1:]
-		if len(args) < 3 || args[1] != "to" {
-			return "Usage: /switch [model|channel] to <name>", true
-		}
-		target := args[0]
-		value := args[2]
-
-		switch target {
-		case "model":
-			defaultAgent := al.registry.GetDefaultAgent()
-			if defaultAgent == nil {
-				return "No default agent configured", true
-			}
-			oldModel := defaultAgent.Model
-			defaultAgent.Model = value
-			if al.cfg != nil {
-				al.cfg.Agents.Defaults.ModelName = value
-				al.cfg.Agents.Defaults.Model = value
-			}
-			return fmt.Sprintf("Switched model from %s to %s", oldModel, value), true
-		case "channel":
-			if al.channelManager == nil {
-				return "Channel manager not initialized", true
-			}
-			if _, exists := al.channelManager.GetChannel(value); !exists && value != "cli" {
-				return fmt.Sprintf("Channel '%s' not found or not enabled", value), true
-			}
-			return fmt.Sprintf("Switched target channel to %s", value), true
-		default:
-			return fmt.Sprintf("Unknown switch target: %s", target), true
-		}
+	default:
+		return "", false
 	}
-
-	return "", false
 }
 
 func mapCommandError(result commands.ExecuteResult) string {

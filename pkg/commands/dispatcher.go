@@ -65,6 +65,26 @@ func secondToken(input string) string {
 	return parts[1]
 }
 
+// HasCommandPrefix returns true if the input starts with a recognized
+// command prefix (e.g. "/" or "!").
+func HasCommandPrefix(input string) bool {
+	token := firstToken(input)
+	if token == "" {
+		return false
+	}
+	_, ok := trimCommandPrefix(token)
+	return ok
+}
+
+// nthToken returns the 0-indexed token from whitespace-split input.
+func nthToken(input string, n int) string {
+	parts := strings.Fields(strings.TrimSpace(input))
+	if n >= len(parts) {
+		return ""
+	}
+	return parts[n]
+}
+
 func normalizeCommandName(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
 }

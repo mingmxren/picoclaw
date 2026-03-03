@@ -8,5 +8,6 @@ func BuiltinDefinitions(deps *Deps) []Definition {
 		helpCommand(deps),
 		showCommand(deps),
 		listCommand(deps),
+		switchCommand(deps),
 	}
 }
