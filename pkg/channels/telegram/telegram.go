@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -107,12 +106,6 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
-	if err := c.initBotCommands(c.ctx); err != nil {
-		logger.WarnCF("telegram", "Failed to initialize bot commands", map[string]any{
-			"error": err.Error(),
-		})
-	}
-
 	updates, err := c.bot.UpdatesViaLongPolling(c.ctx, &telego.GetUpdatesParams{
 		Timeout: 30,
 	})
@@ -165,51 +158,6 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 	}
 	if c.commandRegCancel != nil {
 		c.commandRegCancel()
-	}
-
-	return nil
-}
-
-func (c *TelegramChannel) initBotCommands(ctx context.Context) error {
-	currentCommands, err := c.bot.GetMyCommands(ctx, &telego.GetMyCommandsParams{
-		Scope: tu.ScopeDefault(),
-	})
-	if err != nil {
-		return fmt.Errorf("get commands: %w", err)
-	}
-
-	commands := []telego.BotCommand{
-		{
-			Command:     "start",
-			Description: "Start the bot",
-		},
-		{
-			Command:     "help",
-			Description: "Show a help message",
-		},
-		{
-			Command:     "show",
-			Description: "Show current configuration",
-		},
-		{
-			Command:     "list",
-			Description: "List available options",
-		},
-	}
-
-	// Setting commands on each start will hit the rate limit very quickly, that's why we check if an update is needed
-	if !slices.Equal(currentCommands, commands) {
-		logger.InfoC("telegram", "Updating bot commands")
-
-		err = c.bot.SetMyCommands(ctx, &telego.SetMyCommandsParams{
-			Commands: commands,
-			Scope:    tu.ScopeDefault(),
-		})
-		if err != nil {
-			return fmt.Errorf("set commands: %w", err)
-		}
-	} else {
-		logger.DebugC("telegram", "Bot commands are up to date")
 	}
 
 	return nil
