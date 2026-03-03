@@ -1,8 +1,10 @@
 package channels
 
-import "context"
+import (
+	"context"
 
-import "github.com/sipeed/picoclaw/pkg/commands"
+	"github.com/sipeed/picoclaw/pkg/commands"
+)
 
 // TypingCapable — channels that can show a typing/thinking indicator.
 // StartTyping begins the indicator and returns a stop function.
