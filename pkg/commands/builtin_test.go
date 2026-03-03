@@ -1,0 +1,101 @@
+package commands
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/sipeed/picoclaw/pkg/config"
+)
+
+func findDefinitionByName(t *testing.T, defs []Definition, name string) Definition {
+	t.Helper()
+	for _, def := range defs {
+		if def.Name == name {
+			return def
+		}
+	}
+	t.Fatalf("missing /%s definition", name)
+	return Definition{}
+}
+
+func TestBuiltinHelpHandler_ReturnsFormattedMessage(t *testing.T) {
+	defs := BuiltinDefinitions(nil)
+	helpDef := findDefinitionByName(t, defs, "help")
+	if helpDef.Handler == nil {
+		t.Fatalf("/help handler should not be nil")
+	}
+
+	var reply string
+	err := helpDef.Handler(context.Background(), Request{
+		Text: "/help",
+		Reply: func(text string) error {
+			reply = text
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("/help handler error: %v", err)
+	}
+	if !strings.Contains(reply, "/show [model|channel] - Show current configuration") {
+		t.Fatalf("/help reply missing /show usage, got %q", reply)
+	}
+	if !strings.Contains(reply, "/list [models|channels] - List available options") {
+		t.Fatalf("/help reply missing /list usage, got %q", reply)
+	}
+}
+
+func TestBuiltinShowChannel_PreservesUserVisibleBehavior(t *testing.T) {
+	defs := BuiltinDefinitions(&config.Config{})
+	showDef := findDefinitionByName(t, defs, "show")
+	if showDef.Handler == nil {
+		t.Fatalf("/show handler should not be nil")
+	}
+
+	cases := []string{"telegram", "whatsapp"}
+	for _, channel := range cases {
+		var reply string
+		err := showDef.Handler(context.Background(), Request{
+			Channel: channel,
+			Text:    "/show channel",
+			Reply: func(text string) error {
+				reply = text
+				return nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("/show channel handler error on %s: %v", channel, err)
+		}
+		want := "Current Channel: " + channel
+		if reply != want {
+			t.Fatalf("/show channel reply=%q, want=%q", reply, want)
+		}
+	}
+}
+
+func TestBuiltinListChannels_UsesConfigEnabledChannels(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Channels.Telegram.Enabled = true
+	cfg.Channels.Slack.Enabled = true
+
+	defs := BuiltinDefinitions(cfg)
+	listDef := findDefinitionByName(t, defs, "list")
+	if listDef.Handler == nil {
+		t.Fatalf("/list handler should not be nil")
+	}
+
+	var reply string
+	err := listDef.Handler(context.Background(), Request{
+		Text: "/list channels",
+		Reply: func(text string) error {
+			reply = text
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("/list channels handler error: %v", err)
+	}
+	if !strings.Contains(reply, "telegram") || !strings.Contains(reply, "slack") {
+		t.Fatalf("/list channels reply=%q, want telegram and slack", reply)
+	}
+}
