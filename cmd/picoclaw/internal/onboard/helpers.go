@@ -70,6 +70,11 @@ func copyEmbeddedToTarget(targetDir string) error {
 			return nil
 		}
 
+		// Skip legacy file superseded by AGENTS.md
+		if filepath.Base(path) == "AGENT.md" {
+			return nil
+		}
+
 		// Read embedded file
 		data, err := embeddedFiles.ReadFile(path)
 		if err != nil {
