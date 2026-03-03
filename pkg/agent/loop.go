@@ -568,7 +568,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	// Global commands (/help, /show, /switch) work even when routing fails;
 	// context-dependent commands check their own Runtime fields and report
 	// "unavailable" when the required capability is nil.
-	if response, handled := al.handleCommand(ctx, msg, agent); handled {
+	if response, handled := al.handleCommand(ctx, msg, route, agent); handled {
 		return response, nil
 	}
 
@@ -583,9 +583,12 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		}
 	}
 
-	// Resolve session key from route, while preserving explicit agent-scoped keys.
+	// Resolve active session from the routing scope.
 	scopeKey := resolveScopeKey(route, msg.SessionKey)
-	sessionKey := scopeKey
+	sessionKey, err := agent.Sessions.ResolveActive(scopeKey)
+	if err != nil {
+		return "", fmt.Errorf("resolve active session: %w", err)
+	}
 
 	logger.InfoCF("agent", "Routed message",
 		map[string]any{
@@ -1540,6 +1543,7 @@ func (al *AgentLoop) estimateTokens(messages []providers.Message) int {
 func (al *AgentLoop) handleCommand(
 	ctx context.Context,
 	msg bus.InboundMessage,
+	route routing.ResolvedRoute,
 	agent *AgentInstance,
 ) (string, bool) {
 	if !commands.HasCommandPrefix(msg.Content) {
@@ -1550,7 +1554,7 @@ func (al *AgentLoop) handleCommand(
 		return "", false
 	}
 
-	rt := al.buildCommandsRuntime(agent)
+	rt := al.buildCommandsRuntime(route, agent)
 	executor := commands.NewExecutor(al.cmdRegistry, rt)
 
 	var commandReply string
@@ -1558,6 +1562,7 @@ func (al *AgentLoop) handleCommand(
 		Channel:  msg.Channel,
 		ChatID:   msg.ChatID,
 		SenderID: msg.SenderID,
+		ScopeKey: resolveScopeKey(route, msg.SessionKey),
 		Text:     msg.Content,
 		Reply: func(text string) error {
 			commandReply = text
@@ -1579,7 +1584,10 @@ func (al *AgentLoop) handleCommand(
 	}
 }
 
-func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance) *commands.Runtime {
+func (al *AgentLoop) buildCommandsRuntime(
+	route routing.ResolvedRoute,
+	agent *AgentInstance,
+) *commands.Runtime {
 	rt := &commands.Runtime{
 		Config:          al.cfg,
 		ListAgentIDs:    al.registry.ListAgentIDs,
@@ -1609,6 +1617,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance) *commands.Runtim
 			agent.Model = value
 			return oldModel, nil
 		}
+		rt.SessionOps = agent.Sessions
 	}
 	return rt
 }
