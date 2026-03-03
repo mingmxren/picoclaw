@@ -37,11 +37,28 @@ func TestBuiltinHelpHandler_ReturnsFormattedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("/help handler error: %v", err)
 	}
-	if !strings.Contains(reply, "/show [model|channel] - Show current configuration") {
-		t.Fatalf("/help reply missing /show usage, got %q", reply)
+	if !strings.Contains(reply, "/new - Start a new chat session") {
+		t.Fatalf("/help reply missing /new usage, got %q", reply)
 	}
-	if !strings.Contains(reply, "/list [models|channels] - List available options") {
-		t.Fatalf("/help reply missing /list usage, got %q", reply)
+	if !strings.Contains(reply, "/session [list|resume <index>] - Manage chat sessions") {
+		t.Fatalf("/help reply missing /session usage, got %q", reply)
+	}
+}
+
+func TestBuiltinDefinitions_SessionCommandsRemainPassthroughWithoutRuntime(t *testing.T) {
+	defs := BuiltinDefinitions(nil)
+
+	newDef := findDefinitionByName(t, defs, "new")
+	if !contains(newDef.Aliases, "reset") {
+		t.Fatalf("/new aliases=%v, want alias reset", newDef.Aliases)
+	}
+	if newDef.Handler != nil {
+		t.Fatalf("/new should remain passthrough without runtime handler")
+	}
+
+	sessionDef := findDefinitionByName(t, defs, "session")
+	if sessionDef.Handler != nil {
+		t.Fatalf("/session should remain passthrough without runtime handler")
 	}
 }
 

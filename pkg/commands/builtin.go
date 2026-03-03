@@ -29,6 +29,17 @@ func BuiltinDefinitions(cfg *config.Config) []Definition {
 			},
 		},
 		{
+			Name:        "new",
+			Aliases:     []string{"reset"},
+			Description: "Start a new chat session",
+			Usage:       "/new",
+		},
+		{
+			Name:        "session",
+			Description: "Manage chat sessions",
+			Usage:       "/session [list|resume <index>]",
+		},
+		{
 			Name:        "show",
 			Description: "Show current configuration",
 			Usage:       "/show [model|channel]",
