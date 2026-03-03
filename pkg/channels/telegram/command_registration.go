@@ -53,6 +53,14 @@ func (c *TelegramChannel) startCommandRegistration(ctx context.Context, defs []c
 	// by temporary upstream API failures. Retry stops on success or channel shutdown.
 	go func() {
 		attempt := 0
+		timer := time.NewTimer(0)
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		defer timer.Stop()
 		for {
 			err := register(regCtx, defs)
 			if err == nil {
@@ -64,15 +72,23 @@ func (c *TelegramChannel) startCommandRegistration(ctx context.Context, defs []c
 
 			delay := commandRegistrationBackoff[min(attempt, len(commandRegistrationBackoff)-1)]
 			logger.WarnCF("telegram", "Telegram command registration failed; will retry", map[string]any{
-				"error":      err.Error(),
+				"error":       err.Error(),
 				"retry_after": delay.String(),
 			})
 			attempt++
 
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(delay)
+
 			select {
 			case <-regCtx.Done():
 				return
-			case <-time.After(delay):
+			case <-timer.C:
 			}
 		}
 	}()

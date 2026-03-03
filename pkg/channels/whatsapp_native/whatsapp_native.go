@@ -422,6 +422,11 @@ func (c *WhatsAppNativeChannel) tryHandleCommand(
 			"error":   res.Err.Error(),
 		})
 	}
+	if res.Matched && !res.Handled {
+		logger.DebugCF("whatsapp", "Command matched without handler; passing to normal flow", map[string]any{
+			"command": res.Command,
+		})
+	}
 	return res.Matched
 }
 

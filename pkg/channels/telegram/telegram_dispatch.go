@@ -53,6 +53,11 @@ func (c *TelegramChannel) dispatchCommand(ctx context.Context, message telego.Me
 			"error":   res.Err.Error(),
 		})
 	}
+	if res.Matched && !res.Handled {
+		logger.DebugCF("telegram", "Command matched without handler; passing to normal flow", map[string]any{
+			"command": res.Command,
+		})
+	}
 
 	return true
 }

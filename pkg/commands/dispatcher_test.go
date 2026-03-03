@@ -59,3 +59,45 @@ func TestDispatcher_MatchTelegramMentionSyntax(t *testing.T) {
 		t.Fatalf("dispatch result = %+v, called=%v", res, called)
 	}
 }
+
+func TestDispatcher_MatchBangPrefix(t *testing.T) {
+	called := false
+	d := NewDispatcher(NewRegistry([]Definition{
+		{
+			Name: "help",
+			Handler: func(context.Context, Request) error {
+				called = true
+				return nil
+			},
+		},
+	}))
+
+	res := d.Dispatch(context.Background(), Request{
+		Channel: "telegram",
+		Text:    "!help",
+	})
+	if !res.Matched || !res.Handled || !called || res.Err != nil {
+		t.Fatalf("dispatch result = %+v, called=%v", res, called)
+	}
+}
+
+func TestDispatcher_CommandMatchingIsCaseInsensitive(t *testing.T) {
+	called := false
+	d := NewDispatcher(NewRegistry([]Definition{
+		{
+			Name: "show",
+			Handler: func(context.Context, Request) error {
+				called = true
+				return nil
+			},
+		},
+	}))
+
+	res := d.Dispatch(context.Background(), Request{
+		Channel: "telegram",
+		Text:    "/SHOW",
+	})
+	if !res.Matched || !res.Handled || !called || res.Err != nil {
+		t.Fatalf("dispatch result = %+v, called=%v", res, called)
+	}
+}

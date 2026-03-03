@@ -37,6 +37,8 @@ func (f DispatchFunc) Dispatch(ctx context.Context, req Request) Result {
 	return f(ctx, req)
 }
 
+var commandPrefixes = []string{"/", "!"}
+
 // NewDispatcher binds the unified parser/executor flow to one command registry.
 func NewDispatcher(reg *Registry) *Dispatcher {
 	return &Dispatcher{reg: reg}
@@ -52,7 +54,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req Request) Result {
 	}
 
 	for _, def := range d.reg.Definitions() {
-		if def.Name != cmdName && !contains(def.Aliases, cmdName) {
+		if !matchesCommand(def, cmdName) {
 			continue
 		}
 		if def.Handler == nil {
@@ -73,22 +75,51 @@ func firstToken(input string) string {
 	return parts[0]
 }
 
-// parseCommandName accepts both "/name" and "/name@bot", then normalizes to "name".
+// parseCommandName accepts "/name", "!name", and Telegram's "/name@bot", then
+// normalizes to lowercase command names.
 func parseCommandName(input string) (string, bool) {
 	token := firstToken(input)
-	if token == "" || !strings.HasPrefix(token, "/") {
+	if token == "" {
 		return "", false
 	}
 
-	name := strings.TrimPrefix(token, "/")
+	name, ok := trimCommandPrefix(token)
+	if !ok {
+		return "", false
+	}
 	if i := strings.Index(name, "@"); i >= 0 {
 		name = name[:i]
 	}
-	name = strings.TrimSpace(name)
+	name = normalizeCommandName(name)
 	if name == "" {
 		return "", false
 	}
 	return name, true
+}
+
+func trimCommandPrefix(token string) (string, bool) {
+	for _, prefix := range commandPrefixes {
+		if strings.HasPrefix(token, prefix) {
+			return strings.TrimPrefix(token, prefix), true
+		}
+	}
+	return "", false
+}
+
+func normalizeCommandName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func matchesCommand(def Definition, cmdName string) bool {
+	if normalizeCommandName(def.Name) == cmdName {
+		return true
+	}
+	for _, alias := range def.Aliases {
+		if normalizeCommandName(alias) == cmdName {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(items []string, target string) bool {
