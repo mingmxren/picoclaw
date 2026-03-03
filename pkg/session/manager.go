@@ -52,6 +52,7 @@ type SessionMeta struct {
 	MessageCnt int       `json:"message_cnt"`
 	Active     bool      `json:"active"`
 	Summary    string    `json:"summary,omitempty"`
+	Preview    string    `json:"preview,omitempty"` // first user message content
 }
 
 type SessionManager struct {
@@ -742,10 +743,20 @@ func (sm *SessionManager) buildSessionMetaListLocked(scope *scopeIndex) []Sessio
 			meta.UpdatedAt = session.Updated
 			meta.MessageCnt = len(session.Messages)
 			meta.Summary = session.Summary
+			meta.Preview = firstUserMessage(session.Messages)
 		}
 		list = append(list, meta)
 	}
 	return list
+}
+
+func firstUserMessage(msgs []providers.Message) string {
+	for _, m := range msgs {
+		if m.Role == "user" && strings.TrimSpace(m.Content) != "" {
+			return m.Content
+		}
+	}
+	return ""
 }
 
 func prependSessionUnique(ordered []string, sessionKey string) []string {

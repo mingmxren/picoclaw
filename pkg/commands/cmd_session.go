@@ -81,7 +81,7 @@ func formatSessionList(list []session.SessionMeta) string {
 			activeMarker = "[*]"
 		}
 
-		summary := truncateSummary(item.Summary, 40)
+		summary := sessionLabel(item.Summary, item.Preview, 40)
 
 		age := "-"
 		if !item.UpdatedAt.IsZero() {
@@ -98,16 +98,21 @@ func formatSessionList(list []session.SessionMeta) string {
 	return strings.Join(lines, "\n")
 }
 
-func truncateSummary(s string, maxLen int) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "(no summary)"
+// sessionLabel picks the best display text for a session list row:
+// summary (if available) > first user message preview > "(empty)".
+func sessionLabel(summary, preview string, maxLen int) string {
+	text := strings.TrimSpace(summary)
+	if text == "" {
+		text = strings.TrimSpace(preview)
 	}
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= maxLen {
-		return s
+	if text == "" {
+		return "(empty)"
 	}
-	return s[:maxLen] + "..."
+	text = strings.ReplaceAll(text, "\n", " ")
+	if len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen] + "..."
 }
 
 // extractSessionTag returns the "#N" suffix from a session key, or "#1" for

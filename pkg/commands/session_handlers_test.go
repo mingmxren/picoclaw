@@ -145,6 +145,47 @@ func TestSessionHandlers_SessionList(t *testing.T) {
 	}
 }
 
+func TestSessionHandlers_SessionList_PreviewFallback(t *testing.T) {
+	ops := &fakeSessionOps{
+		listValue: []session.SessionMeta{
+			{
+				Ordinal:    1,
+				SessionKey: "scope#2",
+				UpdatedAt:  time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC),
+				MessageCnt: 3,
+				Active:     true,
+				Preview:    "How do I fix this login bug?",
+			},
+			{
+				Ordinal:    2,
+				SessionKey: "scope",
+				MessageCnt: 0,
+			},
+		},
+	}
+	rt := &Runtime{SessionOps: ops}
+	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), rt)
+
+	var reply string
+	res := ex.Execute(context.Background(), Request{
+		ScopeKey: "scope",
+		Text:     "/session list",
+		Reply:    func(text string) error { reply = text; return nil },
+	})
+
+	if res.Outcome != OutcomeHandled {
+		t.Fatalf("outcome=%v, want=%v", res.Outcome, OutcomeHandled)
+	}
+	// Row 1: no summary → falls back to preview
+	if !strings.Contains(reply, "How do I fix this login bug?") {
+		t.Fatalf("reply missing preview fallback, got %q", reply)
+	}
+	// Row 2: no summary, no preview, no messages → "(empty)"
+	if !strings.Contains(reply, "(empty)") {
+		t.Fatalf("reply missing (empty) for blank session, got %q", reply)
+	}
+}
+
 func TestSessionHandlers_NilRuntime_Unavailable(t *testing.T) {
 	ex := NewExecutor(NewRegistry(BuiltinDefinitions()), nil)
 
