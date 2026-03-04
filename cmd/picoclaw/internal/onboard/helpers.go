@@ -10,9 +10,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
-// legacyAgentFile is the old workspace template filename superseded by AGENTS.md.
-const legacyAgentFile = "AGENT.md"
-
 func onboard() {
 	configPath := internal.GetConfigPath()
 
@@ -70,11 +67,6 @@ func copyEmbeddedToTarget(targetDir string) error {
 
 		// Skip directories
 		if d.IsDir() {
-			return nil
-		}
-
-		// Skip legacy file superseded by AGENTS.md
-		if filepath.Base(path) == legacyAgentFile {
 			return nil
 		}
 
