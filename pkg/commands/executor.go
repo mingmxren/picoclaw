@@ -84,6 +84,6 @@ func (e *Executor) executeDefinition(ctx context.Context, req Request, def Defin
 	}
 
 	// Unknown sub-command
-	err := req.Reply(fmt.Sprintf("Unknown parameter: %s. Usage: %s", subName, def.EffectiveUsage()))
+	err := req.Reply(fmt.Sprintf("Unknown option: %s. Usage: %s", subName, def.EffectiveUsage()))
 	return ExecuteResult{Outcome: OutcomeHandled, Command: def.Name, Err: err}
 }

@@ -1533,7 +1533,6 @@ func (al *AgentLoop) buildCommandsRuntime() *commands.Runtime {
 			defaultAgent.Model = value
 			if al.cfg != nil {
 				al.cfg.Agents.Defaults.ModelName = value
-				al.cfg.Agents.Defaults.Model = value
 			}
 			return oldModel, nil
 		},
