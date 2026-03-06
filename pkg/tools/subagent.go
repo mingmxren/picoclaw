@@ -120,7 +120,7 @@ func (sm *SubagentManager) RegisterTool(tool Tool) {
 
 func (sm *SubagentManager) Spawn(
 	ctx context.Context,
-	task, label, agentID, originChannel, originChatID string,
+	task, label, agentID, model, originChannel, originChatID string,
 	callback AsyncCallback,
 ) (string, error) {
 	sm.mu.Lock()
@@ -133,6 +133,7 @@ func (sm *SubagentManager) Spawn(
 		ID:            taskID,
 		Task:          task,
 		Label:         label,
+		Model:         model,
 		AgentID:       agentID,
 		OriginChannel: originChannel,
 		OriginChatID:  originChatID,
@@ -181,6 +182,19 @@ After completing the task, provide a clear summary of what was done.`
 	default:
 	}
 
+	// Resolve the model for this task
+	resolvedModel, err := sm.ResolveModel(task.Model)
+	if err != nil {
+		sm.mu.Lock()
+		task.Status = "failed"
+		task.Result = err.Error()
+		sm.mu.Unlock()
+		if callback != nil {
+			callback(ctx, ErrorResult(err.Error()))
+		}
+		return
+	}
+
 	// Run tool loop with access to tools
 	sm.mu.RLock()
 	tools := sm.tools
@@ -204,7 +218,7 @@ After completing the task, provide a clear summary of what was done.`
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
 		Provider:      sm.provider,
-		Model:         sm.defaultModel,
+		Model:         resolvedModel,
 		Tools:         tools,
 		MaxIterations: maxIter,
 		LLMOptions:    llmOptions,
@@ -319,6 +333,10 @@ func (t *SubagentTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Optional short label for the task (for display)",
 			},
+			"model": map[string]any{
+				"type":        "string",
+				"description": "Optional model_name from model_list to use for the subagent",
+			},
 		},
 		"required": []string{"task"},
 	}
@@ -331,9 +349,16 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	}
 
 	label, _ := args["label"].(string)
+	model, _ := args["model"].(string)
 
 	if t.manager == nil {
 		return ErrorResult("Subagent manager not configured").WithError(fmt.Errorf("manager is nil"))
+	}
+
+	// Resolve the model before proceeding
+	resolvedModel, err := t.manager.ResolveModel(model)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("invalid model: %v", err)).WithError(err)
 	}
 
 	// Build messages for subagent
@@ -383,7 +408,7 @@ func (t *SubagentTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 
 	loopResult, err := RunToolLoop(ctx, ToolLoopConfig{
 		Provider:      sm.provider,
-		Model:         sm.defaultModel,
+		Model:         resolvedModel,
 		Tools:         tools,
 		MaxIterations: maxIter,
 		LLMOptions:    llmOptions,

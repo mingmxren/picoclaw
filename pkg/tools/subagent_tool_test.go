@@ -362,6 +362,81 @@ func TestSubagentManager_ResolveModel(t *testing.T) {
 	})
 }
 
+func TestSubagentTool_Execute_WithModel(t *testing.T) {
+	provider := &MockLLMProvider{}
+	msgBus := bus.NewMessageBus()
+	manager := NewSubagentManager(provider, "parent-model", "/tmp/test", msgBus)
+	manager.SetModelValidator(func(name string) bool {
+		return name == "custom-model" || name == "parent-model"
+	})
+	tool := NewSubagentTool(manager)
+
+	ctx := WithToolContext(context.Background(), "cli", "direct")
+	args := map[string]any{
+		"task":  "Test with custom model",
+		"model": "custom-model",
+	}
+
+	result := tool.Execute(ctx, args)
+	if result.IsError {
+		t.Errorf("Expected success, got error: %s", result.ForLLM)
+	}
+}
+
+func TestSubagentTool_Execute_WithInvalidModel(t *testing.T) {
+	provider := &MockLLMProvider{}
+	msgBus := bus.NewMessageBus()
+	manager := NewSubagentManager(provider, "parent-model", "/tmp/test", msgBus)
+	manager.SetModelValidator(func(name string) bool {
+		return name == "parent-model"
+	})
+	tool := NewSubagentTool(manager)
+
+	ctx := WithToolContext(context.Background(), "cli", "direct")
+	args := map[string]any{
+		"task":  "Test with bad model",
+		"model": "nonexistent-model",
+	}
+
+	result := tool.Execute(ctx, args)
+	if !result.IsError {
+		t.Error("Expected error for invalid model")
+	}
+	if !strings.Contains(result.ForLLM, "not found in model_list") {
+		t.Errorf("Error should mention model_list, got: %s", result.ForLLM)
+	}
+}
+
+func TestSpawnTool_Parameters_IncludesModel(t *testing.T) {
+	provider := &MockLLMProvider{}
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	tool := NewSpawnTool(manager)
+	params := tool.Parameters()
+	props := params["properties"].(map[string]any)
+	model, ok := props["model"].(map[string]any)
+	if !ok {
+		t.Fatal("model parameter should exist in spawn tool")
+	}
+	if model["type"] != "string" {
+		t.Errorf("model type should be 'string', got: %v", model["type"])
+	}
+}
+
+func TestSubagentTool_Parameters_IncludesModel(t *testing.T) {
+	provider := &MockLLMProvider{}
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	tool := NewSubagentTool(manager)
+	params := tool.Parameters()
+	props := params["properties"].(map[string]any)
+	model, ok := props["model"].(map[string]any)
+	if !ok {
+		t.Fatal("model parameter should exist in subagent tool")
+	}
+	if model["type"] != "string" {
+		t.Errorf("model type should be 'string', got: %v", model["type"])
+	}
+}
+
 // TestSubagentTool_ForUserTruncation verifies long content is truncated for user
 func TestSubagentTool_ForUserTruncation(t *testing.T) {
 	// Create a mock provider that returns very long content
