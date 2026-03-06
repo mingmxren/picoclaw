@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/session"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 func sessionCommand() Definition {
@@ -109,11 +110,7 @@ func sessionLabel(summary, preview string, maxLen int) string {
 		return "(empty)"
 	}
 	text = strings.ReplaceAll(text, "\n", " ")
-	runes := []rune(text)
-	if len(runes) <= maxLen {
-		return text
-	}
-	return string(runes[:maxLen]) + "..."
+	return utils.Truncate(text, maxLen)
 }
 
 // extractSessionTag returns the "#N" suffix from a session key, or "#1" for

@@ -1554,7 +1554,7 @@ func (al *AgentLoop) handleCommand(
 		return "", false
 	}
 
-	rt := al.buildCommandsRuntime(route, agent)
+	rt := al.buildCommandsRuntime(agent)
 	executor := commands.NewExecutor(al.cmdRegistry, rt)
 
 	var commandReply string
@@ -1584,10 +1584,7 @@ func (al *AgentLoop) handleCommand(
 	}
 }
 
-func (al *AgentLoop) buildCommandsRuntime(
-	route routing.ResolvedRoute,
-	agent *AgentInstance,
-) *commands.Runtime {
+func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance) *commands.Runtime {
 	rt := &commands.Runtime{
 		Config:          al.cfg,
 		ListAgentIDs:    al.registry.ListAgentIDs,

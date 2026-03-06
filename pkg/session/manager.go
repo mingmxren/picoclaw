@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/fileutil"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -654,39 +655,7 @@ func (sm *SessionManager) saveIndexLocked() error {
 		return err
 	}
 
-	tmpFile, err := os.CreateTemp(sm.storage, "index-*.tmp")
-	if err != nil {
-		return err
-	}
-
-	tmpPath := tmpFile.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Chmod(0o644); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Sync(); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, sm.indexPath); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
+	return fileutil.WriteFileAtomic(sm.indexPath, data, 0o644)
 }
 
 func (sm *SessionManager) ensureScopeLocked(scopeKey string, now time.Time) (*scopeIndex, bool) {
@@ -855,13 +824,8 @@ func (sm *SessionManager) writeSessionSnapshot(snapshot Session) error {
 	}
 
 	filename := sanitizeFilename(snapshot.Key)
-
-	// filepath.IsLocal rejects empty names, "..", absolute paths, and
-	// OS-reserved device names (NUL, COM1 … on Windows).
-	// The extra checks reject "." and any directory separators so that
-	// the session file is always written directly inside sm.storage.
-	if filename == "." || !filepath.IsLocal(filename) || strings.ContainsAny(filename, `/\`) {
-		return os.ErrInvalid
+	if err := validateSessionFilename(filename); err != nil {
+		return err
 	}
 
 	data, err := json.MarshalIndent(snapshot, "", "  ")
@@ -870,39 +834,14 @@ func (sm *SessionManager) writeSessionSnapshot(snapshot Session) error {
 	}
 
 	sessionPath := filepath.Join(sm.storage, filename+".json")
-	tmpFile, err := os.CreateTemp(sm.storage, "session-*.tmp")
-	if err != nil {
-		return err
-	}
+	return fileutil.WriteFileAtomic(sessionPath, data, 0o644)
+}
 
-	tmpPath := tmpFile.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		return err
+// validateSessionFilename rejects filenames that would escape sm.storage.
+func validateSessionFilename(filename string) error {
+	if filename == "." || !filepath.IsLocal(filename) || strings.ContainsAny(filename, `/\`) {
+		return os.ErrInvalid
 	}
-	if err := tmpFile.Chmod(0o644); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Sync(); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-
-	if err := os.Rename(tmpPath, sessionPath); err != nil {
-		return err
-	}
-	cleanup = false
 	return nil
 }
 
@@ -912,8 +851,8 @@ func (sm *SessionManager) deleteSessionFile(sessionKey string) error {
 	}
 
 	filename := sanitizeFilename(sessionKey)
-	if filename == "." || !filepath.IsLocal(filename) || strings.ContainsAny(filename, `/\`) {
-		return os.ErrInvalid
+	if err := validateSessionFilename(filename); err != nil {
+		return err
 	}
 
 	sessionPath := filepath.Join(sm.storage, filename+".json")

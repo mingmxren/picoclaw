@@ -9,7 +9,6 @@ import (
 // rely on. Implementations are expected to be scope-aware and deterministic
 // for a given scopeKey. SessionManager satisfies this interface.
 type SessionOps interface {
-	ResolveActive(scopeKey string) (string, error)
 	StartNew(scopeKey string) (string, error)
 	List(scopeKey string) ([]session.SessionMeta, error)
 	Resume(scopeKey string, index int) (string, error)
