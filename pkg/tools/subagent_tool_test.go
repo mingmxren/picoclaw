@@ -300,6 +300,68 @@ func TestSubagentTool_Execute_ContextPassing(t *testing.T) {
 	// but execution success indicates context was handled properly
 }
 
+func TestSubagentManager_ResolveModel(t *testing.T) {
+	provider := &MockLLMProvider{}
+	alwaysValid := func(name string) bool { return true }
+
+	t.Run("uses requested model when valid", func(t *testing.T) {
+		manager := NewSubagentManager(provider, "parent-model", "/tmp/test", nil)
+		manager.SetModelValidator(alwaysValid)
+		model, err := manager.ResolveModel("requested-model")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if model != "requested-model" {
+			t.Errorf("got %q, want %q", model, "requested-model")
+		}
+	})
+
+	t.Run("returns error for invalid requested model", func(t *testing.T) {
+		manager := NewSubagentManager(provider, "parent-model", "/tmp/test", nil)
+		manager.SetModelValidator(func(name string) bool { return name != "bad-model" })
+		_, err := manager.ResolveModel("bad-model")
+		if err == nil {
+			t.Fatal("expected error for invalid model")
+		}
+	})
+
+	t.Run("falls back to subagent default model", func(t *testing.T) {
+		manager := NewSubagentManager(provider, "parent-model", "/tmp/test", nil)
+		manager.SetSubagentDefaultModel("subagent-default")
+		manager.SetModelValidator(alwaysValid)
+		model, err := manager.ResolveModel("")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if model != "subagent-default" {
+			t.Errorf("got %q, want %q", model, "subagent-default")
+		}
+	})
+
+	t.Run("falls back to parent model", func(t *testing.T) {
+		manager := NewSubagentManager(provider, "parent-model", "/tmp/test", nil)
+		manager.SetModelValidator(alwaysValid)
+		model, err := manager.ResolveModel("")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if model != "parent-model" {
+			t.Errorf("got %q, want %q", model, "parent-model")
+		}
+	})
+
+	t.Run("works without validator set (no validation)", func(t *testing.T) {
+		manager := NewSubagentManager(provider, "parent-model", "/tmp/test", nil)
+		model, err := manager.ResolveModel("any-model")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if model != "any-model" {
+			t.Errorf("got %q, want %q", model, "any-model")
+		}
+	})
+}
+
 // TestSubagentTool_ForUserTruncation verifies long content is truncated for user
 func TestSubagentTool_ForUserTruncation(t *testing.T) {
 	// Create a mock provider that returns very long content

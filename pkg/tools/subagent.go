@@ -14,6 +14,7 @@ type SubagentTask struct {
 	ID            string
 	Task          string
 	Label         string
+	Model         string // model_name override for this task
 	AgentID       string
 	OriginChannel string
 	OriginChatID  string
@@ -26,8 +27,10 @@ type SubagentManager struct {
 	tasks          map[string]*SubagentTask
 	mu             sync.RWMutex
 	provider       providers.LLMProvider
-	defaultModel   string
-	bus            *bus.MessageBus
+	defaultModel         string
+	subagentDefaultModel string            // from SubagentsConfig.Model
+	modelValidator       func(string) bool // validates model_name exists
+	bus                  *bus.MessageBus
 	workspace      string
 	tools          *ToolRegistry
 	maxIterations  int
@@ -63,6 +66,41 @@ func (sm *SubagentManager) SetLLMOptions(maxTokens int, temperature float64) {
 	sm.hasMaxTokens = true
 	sm.temperature = temperature
 	sm.hasTemperature = true
+}
+
+// SetSubagentDefaultModel sets the default model for subagents from config.
+func (sm *SubagentManager) SetSubagentDefaultModel(model string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.subagentDefaultModel = model
+}
+
+// SetModelValidator sets the function used to validate model names.
+func (sm *SubagentManager) SetModelValidator(validator func(string) bool) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.modelValidator = validator
+}
+
+// ResolveModel resolves the model to use for a subagent task.
+// Priority: requested > subagentDefaultModel > defaultModel (parent).
+func (sm *SubagentManager) ResolveModel(requested string) (string, error) {
+	sm.mu.RLock()
+	validator := sm.modelValidator
+	subDefault := sm.subagentDefaultModel
+	parentModel := sm.defaultModel
+	sm.mu.RUnlock()
+
+	if requested != "" {
+		if validator != nil && !validator(requested) {
+			return "", fmt.Errorf("model %q not found in model_list", requested)
+		}
+		return requested, nil
+	}
+	if subDefault != "" {
+		return subDefault, nil
+	}
+	return parentModel, nil
 }
 
 // SetTools sets the tool registry for subagent execution.
