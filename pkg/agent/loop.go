@@ -2413,7 +2413,7 @@ turnLoop:
 					})
 			}
 
-			if len(toolResult.Media) > 0 {
+			if len(toolResult.Media) > 0 && toolResult.ResponseHandled {
 				parts := make([]bus.MediaPart, 0, len(toolResult.Media))
 				for _, ref := range toolResult.Media {
 					part := bus.MediaPart{Ref: ref}

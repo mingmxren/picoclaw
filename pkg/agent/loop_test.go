@@ -522,6 +522,12 @@ func TestProcessMessage_MediaArtifactCanBeForwardedBySendFile(t *testing.T) {
 	default:
 		t.Fatal("expected outbound media from send_file")
 	}
+
+	select {
+	case extra := <-msgBus.OutboundMediaChan():
+		t.Fatalf("expected exactly one outbound media delivery, got extra %+v", extra)
+	default:
+	}
 }
 
 // TestAgentLoop_GetStartupInfo verifies startup info contains tools
